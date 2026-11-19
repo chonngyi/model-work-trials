@@ -1,0 +1,10 @@
+{
+  "decision": "try_on_new_work",
+  "reason": "演示判卷：处置与引用都能由账表复核。此答复是工具附带的示例。",
+  "human_minutes": null,
+  "criteria": {
+    "arithmetic": {"rating": "met", "evidence": "1000/200=5.00，810/200=4.05。"},
+    "causal_claim": {"rating": "met", "evidence": "指出短线路占比由 50% 变为 75%，并算出固定首周权重的第二周均值 5.8。"},
+    "false_alarm": {"rating": "met", "evidence": "保留有依据的全站总体变化，收窄了方案效果的归因。"}
+  }
+}

@@ -1,0 +1,8 @@
+runs/
+private/
+*.sqlite
+*.sqlite-*
+.env
+.env.*
+__pycache__/
+.DS_Store

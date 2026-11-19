@@ -1,0 +1,5 @@
+period,line,customers,total_wait_minutes
+quiet,local,0,0
+quiet,express,0,0
+busy,local,7,14
+busy,express,0,0

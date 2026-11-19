@@ -1,0 +1,5 @@
+period,line,customers,total_wait_minutes
+before,local,100,200
+before,express,100,800
+after,local,150,345
+after,express,50,465
