@@ -8,6 +8,7 @@ import shutil
 import sqlite3
 import tempfile
 import unittest
+import zipfile
 from unittest.mock import patch
 
 import chat_api
@@ -173,6 +174,46 @@ class TrialsTest(unittest.TestCase):
         self.record(1,"",artifact=artifact)
         with sqlite3.connect(self.run) as conn:
             self.assertEqual(conn.execute("SELECT body FROM artifacts").fetchone()[0],artifact.read_bytes())
+
+
+    def test_blind_pack_uses_frozen_text_and_blank_scorecard(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            trials.demo(self.run)
+        first = self.folder / "A.zip"
+        second = self.folder / "B.zip"
+        with trials.connect(self.run) as conn:
+            trials.blind_pack(conn, first)
+            trials.blind_pack(conn, second)
+            with self.assertRaises(FileExistsError):
+                trials.blind_pack(conn, first)
+            step = trials.steps(conn)[0]
+            expected_form = trials.grade_template(trials.metadata(conn))
+        self.assertEqual(first.read_bytes(), second.read_bytes())
+        with zipfile.ZipFile(first) as review:
+            self.assertEqual(set(review.namelist()), {"prompt.txt", "answer.txt", "review.md", "scorecard.json"})
+            self.assertEqual(review.read("prompt.txt"), step["prompt"].encode())
+            self.assertEqual(review.read("answer.txt"), step["answer"].encode())
+            self.assertEqual(json.loads(review.read("scorecard.json")), expected_form)
+            for name in review.namelist():
+                self.assertNotIn(b"illustrative answer", review.read(name))
+                self.assertEqual(review.getinfo(name).date_time, (1980, 1, 1, 0, 0, 0))
+
+    def test_blind_pack_stopped_run_excludes_unseen_stage(self):
+        self.start()
+        packet = self.folder / "A.zip"
+        with trials.connect(self.run) as conn, self.assertRaises(ValueError):
+            trials.blind_pack(conn, packet)
+        self.record(1, "partial text", status="partial", note="private delivery note")
+        with trials.connect(self.run) as conn:
+            trials.blind_pack(conn, packet)
+        with zipfile.ZipFile(packet) as review:
+            self.assertEqual(review.read("stage-01/answer.txt"), b"partial text")
+            self.assertFalse(any("stage-02" in name for name in review.namelist()))
+            self.assertFalse(any(b"private delivery note" in review.read(name) for name in review.namelist()))
+        with trials.connect(self.run) as conn:
+            conn.execute("INSERT INTO artifacts VALUES (1, 'evidence.txt', X'61')")
+            with self.assertRaisesRegex(ValueError, "attachments"):
+                trials.blind_pack(conn, self.folder / "with-attachment.zip")
 
 
 if __name__ == "__main__":

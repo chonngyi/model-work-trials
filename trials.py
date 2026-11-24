@@ -9,7 +9,9 @@ import os
 from pathlib import Path
 import sqlite3
 import sys
+import tempfile
 import uuid
+import zipfile
 
 ROOT = Path(__file__).resolve().parent
 ROLES = ("lead", "reviewer", "specialist")
@@ -189,6 +191,47 @@ def grade_template(meta):
             "criteria": {k: {"rating": "", "evidence": ""} for k in meta["rubric"]}}
 
 
+def blind_pack(conn, destination):
+    """Export the observed text and frozen rubric, excluding run metadata and grades."""
+    rows = steps(conn)
+    submitted = [row for row in rows if row["state"] != "ready"]
+    if any(row["state"] == "sending" for row in rows):
+        raise ValueError("Finish the in-flight attempt before blind review")
+    if not submitted or (rows[-1]["state"] == "ready" and submitted[-1]["state"] not in ("partial", "failed")):
+        raise ValueError("Record the remaining stage before blind review")
+    if conn.execute("SELECT 1 FROM artifacts LIMIT 1").fetchone():
+        raise ValueError("This text-only export cannot include attachments; prepare a reviewed packet")
+    if not any((row["answer"] or "").strip() for row in submitted):
+        raise ValueError("There is no delivered text to review")
+    meta = metadata(conn)
+    instructions = ["# 匿名文字评审", "", "按轮次阅读 prompt.txt 和 answer.txt。空答卷表示该轮没有文字交付。",
+                    "按冻结判据填写 scorecard.json，每项 evidence 引用答卷行号或原句。", ""]
+    for key, rule in meta["rubric"].items():
+        instructions.append(f"- **{key}**　{rule}")
+    instructions.extend(["", "rating 可选 " + "、".join(VERDICTS) + "。",
+                         "decision 可选 " + "、".join(DECISIONS) + "。",
+                         "reason 写明适用任务和理由。human_minutes 有实测时填写，其余保留 null。"])
+    entries = {"review.md": "\n".join(instructions) + "\n",
+               "scorecard.json": dump(grade_template(meta)) + "\n"}
+    for row in submitted:
+        prefix = "" if len(rows) == 1 else f"stage-{row['number']:02d}/"
+        entries[prefix + "prompt.txt"] = row["prompt"]
+        entries[prefix + "answer.txt"] = row["answer"] or ""
+    # Fixed ZIP metadata keeps identical inputs byte-identical across repeated exports.
+    # Publish only a finished archive. An existing destination is never overwritten.
+    tmp = tempfile.NamedTemporaryFile(dir=destination.parent, delete=False)
+    try:
+        with tmp, zipfile.ZipFile(tmp, "w") as packet:
+            for name, body in entries.items():
+                member = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+                member.create_system = 3
+                member.external_attr = 0o100600 << 16
+                packet.writestr(member, body.encode("utf-8"))
+        os.link(tmp.name, destination)
+    finally:
+        Path(tmp.name).unlink(missing_ok=True)
+
+
 def set_grade(conn, values):
     states = [row["state"] for row in steps(conn)]
     if "sending" in states:
@@ -285,7 +328,7 @@ def main():
     p.add_argument("--channel", choices=("subscription", "api", "replay"), required=True)
     p.add_argument("--client", required=True, help="actual UI or API client/version")
     p.add_argument("--effort", default="unspecified")
-    for action in ("prompt", "record", "rubric", "grade", "report", "demo", "api", "interrupt", "export"):
+    for action in ("prompt", "record", "rubric", "grade", "report", "demo", "api", "interrupt", "export", "blind-pack"):
         p = sub.add_parser(action)
         p.add_argument("run", type=Path)
         if action in ("record", "api", "interrupt", "export"):
@@ -308,6 +351,8 @@ def main():
         elif action == "export":
             p.add_argument("name")
             p.add_argument("destination", type=Path)
+        elif action == "blind-pack":
+            p.add_argument("destination", type=Path, help="new ZIP for a text-only review")
     p = sub.add_parser("compare")
     p.add_argument("runs", type=Path, nargs="+")
     args = parser.parse_args()
@@ -329,6 +374,8 @@ def main():
             print(dump(grade_template(meta) if args.template else meta["rubric"]))
         elif args.action == "grade":
             set_grade(conn, json.loads(args.scorecard.read_text(encoding="utf-8")))
+        elif args.action == "blind-pack":
+            blind_pack(conn, args.destination)
         elif args.action == "interrupt":
             finish(conn, args.stage, "sending", "failed", "", args.note, {"cancelled_locally": True})
         elif args.action == "export":

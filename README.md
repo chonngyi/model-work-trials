@@ -53,6 +53,21 @@ python3 trials.py report runs/review-a.sqlite > runs/review-a.md
 
 派工决定可以是 `try_on_new_work`（换新题再试）、`use_with_review`（在人工核对下使用）、`hold`（暂缓）或 `insufficient_evidence`（证据不足）。考察两个候选时，在同一冻结题目下分别建记录，再运行 `python3 trials.py compare runs/review-a.sqlite runs/review-b.sqlite`。输出并列的逐项结论，同时保留模型、入口、档位和交付状态。相同题面上的不同工具权限也会影响表现，须在 case 的 conditions 或各次回执中交代。
 
+## 匿名送评文字答卷
+
+记录完交付后，可把冻结题面、已交付的答卷、原评分判据和空白评分表打成 ZIP。下面的第一条命令也可用于前面的演示库，运行时把数据库路径换成 `runs/demo.sqlite` 即可。
+
+```sh
+python3 trials.py blind-pack runs/review-a.sqlite runs/review-A.zip
+# 评者返回填好的 scorecard.json 后登记到原记录
+python3 trials.py grade runs/review-a.sqlite runs/scorecard.json
+python3 trials.py report runs/review-a.sqlite
+```
+
+评者只需收到 ZIP。模型名、客户端回执、耗时、已有评分和附件保留在本地库中。题面、判据和答卷正文保留原文，发送前请检查其中是否自报身份或含有私密内容。多轮包按轮次分目录；中途终止时只收录已尝试的轮次。有附件的交付需要连同附件单独审查。相同材料重复导出的 ZIP 字节一致，目标文件已存在时会停止。
+
+归档时分别记录答卷质量与客户端交付状态。对于能返回流式事件的客户端，用最终回执记录整轮用量，另记从派发到进程退出的总耗时。目录中可见的工具数和实际调用次数应分别记录。
+
 ## 使用自己的 API
 
 命令适用于接受 Bearer key、`model`、`messages` 并返回 `choices[0].message.content` 的文本 Chat Completions 端点。在终端环境中设置 `TRIAL_API_KEY`、`TRIAL_MODEL` 和 `TRIAL_ENDPOINT`，后者应是你所选提供方完整的 HTTPS 请求地址。客户端使用当前环境的 HTTPS 代理设置。每次显式调用 `api` 只发当前一轮，可能按提供方价格计费。不同提供方的原生 Messages、Responses 或 Gemini generateContent 协议可以通过其现有客户端作答，再走上面的手动记录流程。
